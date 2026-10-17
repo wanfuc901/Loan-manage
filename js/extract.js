@@ -96,7 +96,10 @@ export async function readInput(file) {
 // Chuẩn bị ảnh cho OCR: phóng to ảnh hẹp, chuyển xám, đảo màu ảnh nền tối, rồi kéo giãn tương phản
 // để chữ xám nhạt (vd "6/12 đã thanh toán") vẫn đọc được.
 function prepareForOcr(source) {
-  const c = toCanvas(source, source.width < 1100 ? 2 : 1);
+  // Ảnh hẹp phóng to cho chữ rõ; ảnh chụp bằng camera rất lớn thì thu nhỏ để OCR nhanh, đỡ tốn bộ nhớ trên điện thoại.
+  const longSide = Math.max(source.width, source.height);
+  const scale = source.width < 1100 ? Math.min(2, 3000 / longSide) : Math.min(1, 3000 / longSide);
+  const c = toCanvas(source, scale);
   const ctx = c.getContext("2d");
   const px = ctx.getImageData(0, 0, c.width, c.height);
   const d = px.data;
@@ -134,6 +137,13 @@ function getWorker() {
     })().catch((e) => { workerPromise = null; throw e; });
   }
   return workerPromise;
+}
+
+// Tải sẵn Tesseract + dữ liệu tiếng Việt khi người dùng mở tab Thêm, để lần đọc đầu tiên nhanh hơn.
+export function warmUpOcr() {
+  const start = () => getWorker().catch(() => { /* thử lại khi đọc thật */ });
+  if ("requestIdleCallback" in window) requestIdleCallback(start, { timeout: 2000 });
+  else setTimeout(start, 800);
 }
 
 async function ocrImages(images, onProgress) {

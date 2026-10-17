@@ -1,5 +1,5 @@
 import { loadLoans, saveLoans, loadSettings, saveSettings, syncConfigured, pushEncrypted } from "./store.js";
-import { extractLoans, isPdf, listGroqModels } from "./extract.js";
+import { extractLoans, isPdf, listGroqModels, warmUpOcr } from "./extract.js";
 import { normalize } from "./parse.js";
 import {
   newId, normalizeLoan, deriveLoan, missingRequired, REQUIRED, remainingPeriods, addMonths, advanceDue, toISO,
@@ -62,10 +62,14 @@ function commit() {
 
 // ---------- Tab ----------
 
+let currentTab = "";
 function showTab(name) {
+  if (name !== currentTab) window.scrollTo(0, 0);
+  currentTab = name;
   $$(".tabs button").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
   $$(".tab-panel").forEach((p) => (p.hidden = p.id !== `tab-${name}`));
   try { sessionStorage.setItem("skv.tab", name); } catch { /* bỏ qua */ }
+  if (name === "upload" && settings.engine === "ocr") warmUpOcr();
 }
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -83,22 +87,23 @@ function renderDashboard() {
   const monthlyTotal = active.reduce((s, l) => s + (l.cycle === "monthly" ? l.monthlyPayment : 0), 0);
 
   $("#st-remaining").textContent = money(active.reduce((s, l) => s + l.remaining, 0));
-  $("#st-remaining-sub").textContent = `${active.length} khoản đang vay`;
+  const principalTotal = active.reduce((s, l) => s + l.principal, 0);
+  $("#st-remaining-sub").textContent = `${active.length} khoản · mỗi tháng ${money(monthlyTotal)}${principalTotal ? ` · gốc vay ${money(principalTotal)}` : ""}`;
   $("#st-month").textContent = money(dueNow.reduce((s, l) => s + amountDue(l), 0));
-  $("#st-month-sub").textContent = `${dueNow.length} khoản${overdue.length ? `, ${overdue.length} quá hạn` : ""} · mỗi tháng ${money(monthlyTotal)}`;
-  $("#st-principal").textContent = money(active.reduce((s, l) => s + l.principal, 0));
-  $("#st-principal-sub").textContent = "của các khoản đang vay";
+  $("#st-month-sub").textContent = `${dueNow.length} khoản${overdue.length ? `, ${overdue.length} quá hạn` : ""}`;
+  $("#st-principal").textContent = money(principalTotal);
+  $("#st-principal-sub").textContent = "các khoản đang vay";
   $("#st-paid").textContent = money(paidAll.reduce((s, p) => s + p.amount, 0));
-  $("#st-paid-sub").textContent = `${paidAll.length} lần thanh toán ghi nhận trên web`;
+  $("#st-paid-sub").textContent = `${paidAll.length} lần ghi nhận`;
 
   const upcoming = active.filter((l) => l.dueDate).sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 8);
   $("#due-list").innerHTML = upcoming.length
     ? upcoming.map((l) => `
       <li>
-        <div><div><b>${esc(l.name)}</b></div><div class="small muted">${fmtDate(l.dueDate)} ${dueBadge(l)}</div>
-          <div class="small muted">${esc(periodsText(l))}</div></div>
-        <div style="text-align:right"><div class="amt">${money(amountDue(l))}</div>
-          <button class="btn sm ghost" data-act="pay" data-id="${l.id}">Đã trả</button></div>
+        <div class="info"><div class="name">${esc(l.name)}</div>
+          <div class="small muted">${fmtDate(l.dueDate)} ${dueBadge(l)}</div></div>
+        <div class="side"><div class="amt">${money(amountDue(l))}</div>
+          <button class="btn sm" data-act="pay" data-id="${l.id}">Đã trả</button></div>
       </li>`).join("")
     : `<li class="muted">Chưa có khoản vay nào có ngày đến hạn.</li>`;
 
@@ -157,16 +162,20 @@ function renderAlerts() {
   const incomplete = loans.filter((l) => missingRequired(l).length);
   let html = "";
   if (overdue.length) {
-    html += `<div class="alert danger">Có ${overdue.length} khoản quá hạn: ${overdue.map((l) => esc(l.name)).join(", ")}.</div>`;
+    html += `<button type="button" class="alert danger" data-goto="loans">Có ${overdue.length} khoản quá hạn: ${overdue.map((l) => esc(l.name)).join(", ")}</button>`;
   }
   if (soon.length) {
-    html += `<div class="alert">Sắp đến hạn trong 3 ngày: ${soon.map((l) => `${esc(l.name)} (${fmtDate(l.dueDate)})`).join(", ")}.</div>`;
+    html += `<button type="button" class="alert" data-goto="loans">Sắp đến hạn trong 3 ngày: ${soon.map((l) => `${esc(l.name)} (${fmtDate(l.dueDate)})`).join(", ")}</button>`;
   }
   if (incomplete.length) {
-    html += `<div class="alert">${incomplete.length} khoản vay còn thiếu thông tin bắt buộc. Vào tab Khoản vay và bấm Sửa để bổ sung.</div>`;
+    html += `<button type="button" class="alert" data-goto="loans">${incomplete.length} khoản vay còn thiếu thông tin bắt buộc, chạm vào khoản đó để bổ sung</button>`;
   }
   $("#alerts").innerHTML = html;
 }
+$("#alerts").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-goto]");
+  if (b) showTab(b.dataset.goto);
+});
 
 // Thông báo trình duyệt tối đa 1 lần/ngày khi mở web.
 function browserNotify() {
@@ -183,7 +192,7 @@ function browserNotify() {
 
 function renderList() {
   const q = normalize($("#q").value.trim());
-  const status = $("#f-status").value;
+  const status = $('input[name="f-status"]:checked').value;
   const sort = $("#f-sort").value;
   let list = loans.filter((l) => status === "all" || l.status === status);
   if (q) list = list.filter((l) => normalize(`${l.name} ${l.lender} ${l.contractNo} ${l.note}`).includes(q));
@@ -194,43 +203,41 @@ function renderList() {
     created: (a, b) => b.createdAt.localeCompare(a.createdAt),
   }[sort];
   list.sort(cmp);
-  $("#list-count").textContent = `${list.length} khoản`;
+  $("#list-count").textContent = list.length ? `${list.length} khoản · chạm để sửa` : "";
 
   if (!loans.length) {
-    $("#loan-list").innerHTML = `<div class="empty card">Chưa có khoản vay nào. Vào tab <b>Thêm từ ảnh</b> để tải ảnh chụp màn hình hoặc PDF hợp đồng, hoặc bấm <b>Thêm thủ công</b>.</div>`;
+    $("#loan-list").innerHTML = `<div class="empty card">Chưa có khoản vay nào.<br>Bấm <b>Thêm</b> ở thanh dưới để chọn ảnh chụp màn hình, PDF hợp đồng hoặc nhập tay.</div>`;
     return;
   }
   $("#loan-list").innerHTML = list.map((l) => {
     const pct = l.termMonths && l.paidPeriods != null
       ? Math.min(100, (l.paidPeriods / l.termMonths) * 100)
       : l.principal ? Math.min(100, Math.max(0, ((l.principal - l.remaining) / l.principal) * 100)) : 0;
-    const meta = [l.lender, l.contractNo && `HĐ ${l.contractNo}`, l.interestRate && `Lãi ${l.interestRate}%/${l.interestPeriod === "month" ? "tháng" : "năm"}`,
-      l.dueDay && `trả ngày ${l.dueDay} hằng tháng`].filter(Boolean).map(esc).join(" · ");
+    const meta = [l.lender, l.contractNo && `HĐ ${l.contractNo}`, l.interestRate && `Lãi ${l.interestRate}%/${l.interestPeriod === "month" ? "tháng" : "năm"}`]
+      .filter(Boolean).map(esc).join(" · ");
     const miss = missingRequired(l);
-    return `<article class="loan">
-      <div>
-        <div class="loan-title">${esc(l.name)} ${dueBadge(l)} ${miss.length ? `<span class="badge danger">Thiếu: ${miss.map((k) => REQUIRED[k]).join(", ")}</span>` : ""}</div>
-        <div class="loan-meta">${meta || "&nbsp;"}</div>
+    const left = remainingPeriods(l);
+    return `<article class="loan" data-act="edit" data-id="${l.id}">
+      <div class="loan-top">
+        <div class="loan-title">${esc(l.name)}</div>
+        ${dueBadge(l)}
       </div>
-      <div class="loan-actions">
-        ${l.status === "active" ? `<button class="btn sm" data-act="pay" data-id="${l.id}">Ghi nhận trả</button>` : ""}
-        <button class="btn sm ghost" data-act="edit" data-id="${l.id}">Sửa</button>
-        <button class="btn sm ghost danger" data-act="delete" data-id="${l.id}">Xoá</button>
-      </div>
-      <div class="loan-nums">
-        <span>Tổng nợ còn lại: <b>${money(l.remaining)}</b></span>
-        <span>Mỗi tháng: <b>${money(l.monthlyPayment)}</b></span>
-        <span>Kỳ: <b>${l.paidPeriods ?? "?"}/${l.termMonths || "?"}</b>${remainingPeriods(l) != null ? ` (còn ${remainingPeriods(l)})` : ""}</span>
-        <span>Hạn tới: <b>${fmtDate(l.dueDate)}</b></span>
-        ${l.principal ? `<span>Gốc vay: <b>${money(l.principal)}</b></span>` : ""}
+      ${meta ? `<div class="loan-meta">${meta}</div>` : ""}
+      ${miss.length ? `<div class="missing" style="margin:8px 0 0">Thiếu: ${miss.map((k) => REQUIRED[k]).join(", ")}</div>` : ""}
+      <div class="loan-amount">${money(l.remaining)} <small>còn nợ</small></div>
+      <div class="loan-facts">
+        <span>Mỗi tháng <b>${money(l.monthlyPayment)}</b></span>
+        <span>Kỳ <b>${l.paidPeriods ?? "?"}/${l.termMonths || "?"}</b>${left != null ? ` (còn ${left})` : ""}</span>
+        <span>Hạn <b>${fmtDate(l.dueDate)}</b></span>
       </div>
       ${pct ? `<div class="progress-mini" title="Đã trả ${pct.toFixed(0)}%"><span style="width:${pct}%"></span></div>` : ""}
-      ${l.note ? `<div class="loan-meta" style="grid-column:1/-1">${esc(l.note)}</div>` : ""}
+      ${l.status === "active" ? `<div class="loan-actions"><button class="btn sm" data-act="pay" data-id="${l.id}">Ghi nhận đã trả ${money(amountDue(l))}</button></div>` : ""}
     </article>`;
   }).join("") || `<div class="empty card">Không có khoản vay khớp bộ lọc.</div>`;
 }
 
-["#q", "#f-status", "#f-sort"].forEach((s) => $(s).addEventListener("input", renderList));
+["#q", "#f-sort"].forEach((sel) => $(sel).addEventListener("input", renderList));
+$$('input[name="f-status"]').forEach((r) => r.addEventListener("change", renderList));
 
 document.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-act]");
@@ -238,24 +245,20 @@ document.addEventListener("click", (e) => {
   const loan = loans.find((l) => l.id === btn.dataset.id);
   if (btn.dataset.act === "edit" && loan) openLoanDialog(loan);
   if (btn.dataset.act === "pay" && loan) openPayDialog(loan);
-  if (btn.dataset.act === "delete" && loan && confirm(`Xoá khoản vay "${loan.name}"?`)) {
-    loans = loans.filter((l) => l.id !== loan.id);
-    commit();
-    toast("Đã xoá");
-  }
 });
 
 // ---------- Form khoản vay (dùng chung cho hộp thoại và thẻ xác nhận) ----------
 
+// main: hiện ngay; còn lại nằm trong mục "Chi tiết khác" để form gọn trên điện thoại.
 const FIELDS = [
-  { k: "name", label: "Tên khoản vay", type: "text" },
-  { k: "lender", label: "Bên cho vay", type: "text" },
-  { k: "remaining", label: "Tổng nợ còn lại (gốc + lãi)", type: "money" },
-  { k: "monthlyPayment", label: "Số tiền trả mỗi tháng", type: "money" },
-  { k: "paidPeriods", label: "Đã trả bao nhiêu kỳ", type: "int" },
-  { k: "termMonths", label: "Tổng số kỳ (tháng)", type: "int" },
-  { k: "dueDay", label: "Trả vào ngày (hằng tháng)", type: "int", max: 31 },
-  { k: "dueDate", label: "Ngày đến hạn kỳ tới", type: "date" },
+  { k: "name", label: "Tên khoản vay", type: "text", main: true, wide: true },
+  { k: "lender", label: "Bên cho vay", type: "text", main: true, wide: true },
+  { k: "remaining", label: "Tổng nợ còn lại", type: "money", main: true },
+  { k: "monthlyPayment", label: "Trả mỗi tháng", type: "money", main: true },
+  { k: "paidPeriods", label: "Đã trả (kỳ)", type: "int", main: true },
+  { k: "termMonths", label: "Tổng số kỳ", type: "int", main: true },
+  { k: "dueDay", label: "Trả ngày (hằng tháng)", type: "int", max: 31, main: true },
+  { k: "dueDate", label: "Hạn kỳ tới", type: "date", main: true },
   { k: "principal", label: "Số tiền vay gốc", type: "money" },
   { k: "contractNo", label: "Số hợp đồng", type: "text" },
   { k: "interestRate", label: "Lãi suất (%)", type: "number" },
@@ -263,7 +266,7 @@ const FIELDS = [
   { k: "startDate", label: "Ngày giải ngân", type: "date" },
   { k: "cycle", label: "Chu kỳ trả", type: "select", options: [["monthly", "Hàng tháng"], ["once", "Trả một lần"]] },
   { k: "status", label: "Trạng thái", type: "select", options: [["active", "Đang vay"], ["paid", "Đã tất toán"]] },
-  { k: "note", label: "Ghi chú", type: "textarea", full: true },
+  { k: "note", label: "Ghi chú", type: "textarea", wide: true },
 ];
 const CHECK_FIELDS = new Set(["lender", "principal", "remaining", "monthlyPayment", "paidPeriods", "termMonths", "dueDate"]);
 
@@ -279,19 +282,25 @@ function inputHtml(f, v) {
     return `<select name="${f.k}">${f.options.map(([val, txt]) => `<option value="${val}"${v === val ? " selected" : ""}>${txt}</option>`).join("")}</select>`;
   }
   if (f.type === "textarea") return `<textarea name="${f.k}" rows="2">${esc(v)}</textarea>`;
+  if (f.type === "text") return `<input type="text" name="${f.k}" value="${esc(v)}" autocomplete="off">`;
   if (f.type === "money") return `<input type="text" inputmode="numeric" data-money name="${f.k}" value="${v ? nf.format(v) : ""}">`;
-  if (f.type === "int") return `<input type="number" step="1" min="0"${f.max ? ` max="${f.max}"` : ""} name="${f.k}" value="${v === null || v === undefined || (v === 0 && f.k !== "paidPeriods") ? "" : v}">`;
-  if (f.type === "number") return `<input type="number" step="any" min="0" name="${f.k}" value="${v || ""}">`;
+  if (f.type === "int") return `<input type="number" inputmode="numeric" pattern="[0-9]*" step="1" min="0"${f.max ? ` max="${f.max}"` : ""} name="${f.k}" value="${v === null || v === undefined || (v === 0 && f.k !== "paidPeriods") ? "" : v}">`;
+  if (f.type === "number") return `<input type="number" inputmode="decimal" step="any" min="0" name="${f.k}" value="${v || ""}">`;
   return `<input type="${f.type}" name="${f.k}" value="${esc(v)}">`;
 }
 
+function fieldHtml(f, loan, state) {
+  const cls = fieldClass(f.k, state);
+  const req = REQUIRED[f.k] ? ' <span class="req">*</span>' : "";
+  const tip = state.estimated?.has(f.k) ? ' title="Giá trị ước tính, hãy kiểm tra lại"' : "";
+  return `<label data-field="${f.k}" class="${f.wide ? "wide" : ""}${cls}"${tip}><span>${f.label}${req}</span>${inputHtml(f, loan[f.k] ?? "")}</label>`;
+}
+
 function fieldsHtml(loan, state = {}) {
-  return FIELDS.map((f) => {
-    const cls = fieldClass(f.k, state);
-    const req = REQUIRED[f.k] ? ' <span class="req">*</span>' : "";
-    const tip = state.estimated?.has(f.k) ? ' title="Giá trị ước tính, hãy kiểm tra lại"' : "";
-    return `<label data-field="${f.k}" class="${f.full ? "full" : ""}${cls}"${tip}><span>${f.label}${req}</span>${inputHtml(f, loan[f.k] ?? "")}</label>`;
-  }).join("") + `<div class="full small muted" data-left>${esc(periodsText(loan))}</div>`;
+  const main = FIELDS.filter((f) => f.main).map((f) => fieldHtml(f, loan, state)).join("");
+  const more = FIELDS.filter((f) => !f.main).map((f) => fieldHtml(f, loan, state)).join("");
+  return `<div class="form-grid">${main}<div class="periods-left" data-left>${esc(periodsText(loan))}</div></div>
+    <details class="more"><summary>Chi tiết khác (gốc vay, hợp đồng, lãi suất...)</summary><div class="form-grid">${more}</div></details>`;
 }
 
 function readFields(root) {
@@ -357,12 +366,22 @@ function openLoanDialog(loan) {
   editingId = loan?.id ?? null;
   dialogEstimated = new Set();
   const data = loan ?? normalizeLoan({});
-  $("#loan-dialog-title").textContent = loan ? "Sửa khoản vay" : "Thêm khoản vay";
+  $("#loan-dialog-title").textContent = loan ? "Khoản vay" : "Thêm khoản vay";
   $("#loan-fields").innerHTML = fieldsHtml(data, { missing: loan ? missingRequired(loan) : [] });
   paintState($("#loan-form"), data, { missing: loan ? missingRequired(loan) : [] });
+  $("#btn-delete").hidden = !loan;
   $("#loan-dialog").showModal();
+  $(".sheet-body", $("#loan-dialog")).scrollTop = 0;
 }
 $("#btn-add").addEventListener("click", () => openLoanDialog(null));
+$("#btn-delete").addEventListener("click", () => {
+  const loan = loans.find((l) => l.id === editingId);
+  if (!loan || !confirm(`Xoá khoản vay "${loan.name}"?`)) return;
+  loans = loans.filter((l) => l.id !== loan.id);
+  $("#loan-dialog").close("cancel");
+  commit();
+  toast("Đã xoá");
+});
 
 $("#loan-form").addEventListener("input", (e) => {
   const form = $("#loan-form");
@@ -459,12 +478,21 @@ $("#pay-dialog").addEventListener("close", () => {
 const images = []; // { id, file, url, thumb, status, candidates, error, engine }
 let processing = false;
 
+const ENGINE_NOTES = {
+  ocr: () => "Đọc ngay trên máy, miễn phí, không giới hạn. Phù hợp ảnh chụp màn hình rõ nét.",
+  groq: () => (settings.groqKey ? "Gửi ảnh tới Groq để đọc. Gói miễn phí xử lý khoảng 1-2 ảnh mỗi phút." : "Chưa có Groq API key: nhập trong Cài đặt > AI Groq."),
+  claude: () => (settings.claudeKey ? "Gửi ảnh tới Claude để đọc, tính phí theo tài khoản Anthropic." : "Chưa có Claude API key: nhập trong Cài đặt > AI Claude."),
+};
+
 function setEngineRadio() {
   $$('input[name="engine"]').forEach((r) => (r.checked = r.value === settings.engine));
+  $("#engine-note").textContent = ENGINE_NOTES[settings.engine]?.() ?? "";
 }
 $$('input[name="engine"]').forEach((r) => r.addEventListener("change", () => {
   settings.engine = r.value;
   saveSettings(settings);
+  setEngineRadio();
+  if (r.value === "ocr") warmUpOcr();
 }));
 
 function addFiles(files) {
@@ -551,10 +579,13 @@ function prepareCandidate({ loan, detected, rawText }, engine) {
 function renderReviewShell() {
   const ready = images.flatMap((i) => (i.status === "ready" ? i.candidates : []));
   const visible = images.filter((i) => i.status !== "removed");
-  $("#review-head").hidden = visible.length === 0;
-  $("#review-hint").hidden = visible.length === 0;
   const pending = visible.filter((i) => ["pending", "processing"].includes(i.status)).length;
+  const chosen = ready.filter((c) => c.include).length;
+  $("#review-head").hidden = visible.length === 0;
   $("#review-count").textContent = `(${ready.length} khoản từ ${visible.length} tệp${pending ? `, còn ${pending} tệp đang đọc` : ""})`;
+  $("#review-bar").hidden = visible.length === 0;
+  $("#btn-save-all").textContent = chosen ? `Lưu ${chosen} khoản đã chọn` : "Lưu";
+  $("#btn-save-all").disabled = !chosen;
 }
 
 function mergeOptions(selected) {
@@ -565,10 +596,19 @@ function mergeOptions(selected) {
 
 function thumbHtml(img) {
   const src = img.thumb || img.url;
-  const pic = src
-    ? `<img src="${src}" alt="${esc(img.file.name)}" data-zoom="${src}">`
-    : `<div class="pdf-thumb">PDF</div>`;
-  return `<div class="review-thumb">${pic}<div class="small muted">${esc(img.file.name)}</div></div>`;
+  return src
+    ? `<div class="review-thumb"><img src="${src}" alt="" loading="lazy" decoding="async" data-zoom="${src}"></div>`
+    : `<div class="review-thumb"><div class="pdf-thumb">PDF</div></div>`;
+}
+
+function retryButtons(img) {
+  return `<div class="retry-row">
+    <button class="btn sm" data-img="${img.id}" data-do="retry-ocr">OCR</button>
+    <button class="btn sm" data-img="${img.id}" data-do="retry-groq">Groq</button>
+    <button class="btn sm" data-img="${img.id}" data-do="retry-claude">Claude</button>
+    <button class="btn sm" data-img="${img.id}" data-do="manual">Nhập tay</button>
+    <button class="btn sm ghost danger" data-img="${img.id}" data-do="remove">Bỏ tệp</button>
+  </div>`;
 }
 
 function renderImageCard(img) {
@@ -582,51 +622,45 @@ function renderImageCard(img) {
     list.appendChild(el);
   }
   const thumb = thumbHtml(img);
+  const file = `<div class="file">${esc(img.file.name)}</div>`;
 
   if (img.status === "pending" || img.status === "processing") {
-    el.innerHTML = `<div class="review">${thumb}<div class="muted">${img.status === "pending" ? "Đang chờ..." : "Đang đọc..."}</div></div>`;
+    el.innerHTML = `<div class="review"><div class="review-top">${thumb}<div class="review-title">${file}
+      <div class="muted">${img.status === "pending" ? "Đang chờ..." : "Đang đọc..."}</div></div></div></div>`;
     return;
   }
-  const retryButtons = `
-    <button class="btn sm" data-img="${img.id}" data-do="retry-ocr">Đọc lại bằng OCR</button>
-    <button class="btn sm" data-img="${img.id}" data-do="retry-groq">Đọc lại bằng Groq</button>
-    <button class="btn sm" data-img="${img.id}" data-do="retry-claude">Đọc lại bằng Claude</button>
-    <button class="btn sm" data-img="${img.id}" data-do="manual">Nhập tay</button>
-    <button class="btn sm ghost" data-img="${img.id}" data-do="remove">Bỏ tệp</button>`;
-  if (img.status === "error") {
-    el.innerHTML = `<div class="review error">${thumb}<div>
-      <b>Không đọc được tệp</b><p class="small">${esc(img.error)}</p>
-      <div class="row">${retryButtons}</div></div></div>`;
+  if (img.status === "error" || !img.candidates.length) {
+    const msg = img.status === "error"
+      ? `<b>Không đọc được tệp</b><p class="small" style="margin:4px 0 0">${esc(img.error)}</p>`
+      : "<b>Không tìm thấy khoản vay trong tệp</b>";
+    el.innerHTML = `<div class="review${img.status === "error" ? " error" : ""}"><div class="review-top">${thumb}
+      <div class="review-title">${file}${msg}</div></div>
+      <div class="small muted">Thử đọc lại bằng cách khác:</div>${retryButtons(img)}</div>`;
     return;
   }
-  if (!img.candidates.length) {
-    el.innerHTML = `<div class="review">${thumb}<div>
-      <b>Không tìm thấy khoản vay trong tệp</b>
-      <div class="row" style="margin-top:8px">${retryButtons}</div></div></div>`;
-    return;
-  }
-  el.innerHTML = img.candidates.map((c) => {
+  el.innerHTML = img.candidates.map((c, idx) => {
     const missing = missingRequired(c.loan);
     return `
     <div class="review${c.include ? "" : " skipped"}" data-cid="${c.cid}">
-      ${thumb}
-      <div>
-        <div class="review-top">
-          <label class="check"><input type="checkbox" data-include${c.include ? " checked" : ""}> Lưu mục này</label>
-          <select data-merge style="width:auto;max-width:100%">${mergeOptions(c.mergeInto)}</select>
+      <div class="review-top">
+        ${thumb}
+        <div class="review-title">
+          ${file}${img.candidates.length > 1 ? `<div class="small muted">Khoản ${idx + 1}/${img.candidates.length}</div>` : ""}
+          <label class="check" style="display:flex;align-items:center;gap:.5rem"><input type="checkbox" data-include${c.include ? " checked" : ""}> Lưu khoản này</label>
+          <select data-merge aria-label="Lưu thành">${mergeOptions(c.mergeInto)}</select>
         </div>
-        ${c.dupName ? `<div class="dup">Có vẻ trùng với khoản "${esc(c.dupName)}" đã có. Mặc định sẽ cập nhật vào khoản đó.</div>` : ""}
-        <div class="missing" data-missing${missing.length ? "" : " hidden"}>${missing.length ? `Thiếu thông tin bắt buộc: ${missing.map((k) => REQUIRED[k]).join(", ")}` : ""}</div>
-        <div class="form-grid">${fieldsHtml(c.loan, { detected: c.detected, estimated: c.estimated, missing })}</div>
-        <div class="row end">
-          <button class="btn sm ghost" data-do="skip">Bỏ qua</button>
-          <button class="btn sm primary" data-do="save-one">Lưu</button>
-        </div>
-        ${c.rawText ? `<details><summary class="small muted">Xem chữ máy đọc được</summary><pre>${esc(c.rawText)}</pre></details>` : ""}
       </div>
+      ${c.dupName ? `<div class="dup">Có vẻ trùng với khoản "${esc(c.dupName)}" đã có, mặc định sẽ cập nhật vào khoản đó.</div>` : ""}
+      <div class="missing" data-missing${missing.length ? "" : " hidden"}>${missing.length ? `Thiếu thông tin bắt buộc: ${missing.map((k) => REQUIRED[k]).join(", ")}` : ""}</div>
+      ${fieldsHtml(c.loan, { detected: c.detected, estimated: c.estimated, missing })}
+      <div class="review-actions">
+        <button class="btn sm ghost" data-do="skip">Bỏ qua</button>
+        <button class="btn sm primary" data-do="save-one">Lưu khoản này</button>
+      </div>
+      ${idx === img.candidates.length - 1 ? `<details><summary class="small muted">Đọc sai? Đọc lại tệp này</summary>${retryButtons(img)}</details>` : ""}
+      ${c.rawText ? `<details><summary class="small muted">Xem chữ máy đọc được</summary><pre>${esc(c.rawText)}</pre></details>` : ""}
     </div>`;
-  }).join("") + (img.candidates.length > 1 || img.engine === "ocr"
-    ? `<div class="row small muted" style="grid-column:1/-1;margin-top:-4px">${img.candidates.length} khoản đọc từ ${esc(img.file.name)}. Đọc sai? ${retryButtons}</div>` : "");
+  }).join("");
 }
 
 function findCandidate(cid) {
@@ -646,6 +680,7 @@ $("#review-list").addEventListener("input", (e) => {
   if (e.target.matches("[data-include]")) {
     c.include = e.target.checked;
     card.classList.toggle("skipped", !c.include);
+    renderReviewShell();
     return;
   }
   if (e.target.matches("[data-merge]")) {
@@ -839,6 +874,22 @@ function fillSettingsForm() {
   f.remindOverdue.checked = settings.remindOverdue;
   f.autoSync.checked = settings.autoSync;
   $("#sync-status").textContent = settings.lastSync ? `Lần đồng bộ gần nhất: ${new Date(settings.lastSync).toLocaleString("vi-VN")}` : "";
+  paintSettingStates();
+}
+
+// Trạng thái ngắn bên phải tiêu đề mỗi mục cài đặt.
+function paintSettingStates() {
+  const states = {
+    email: settings.email ? ["Đã bật", true] : ["Chưa bật", false],
+    sync: syncConfigured(settings) ? ["Đã cấu hình", true] : ["Chưa cấu hình", false],
+    groq: settings.groqKey ? ["Đã có key", true] : ["Chưa có key", false],
+    claude: settings.claudeKey ? ["Đã có key", true] : ["Chưa có key", false],
+  };
+  for (const [k, [text, on]] of Object.entries(states)) {
+    const el = $(`[data-state="${k}"]`);
+    el.textContent = text;
+    el.classList.toggle("on", on);
+  }
 }
 
 function readSettingsForm() {
@@ -854,12 +905,19 @@ function readSettingsForm() {
   saveSettings(settings);
 }
 
-$("#settings-form").addEventListener("submit", (e) => {
-  e.preventDefault();
-  readSettingsForm();
-  fillSettingsForm();
-  $("#settings-status").textContent = "Đã lưu cài đặt";
-  scheduleSync();
+// Cài đặt tự lưu sau khi ngừng gõ, không cần nút Lưu.
+let settingsTimer;
+$("#settings-form").addEventListener("submit", (e) => e.preventDefault());
+$("#settings-form").addEventListener("input", (e) => {
+  if (e.target.id === "import-input") return;
+  clearTimeout(settingsTimer);
+  settingsTimer = setTimeout(() => {
+    readSettingsForm();
+    paintSettingStates();
+    setEngineRadio();
+    $("#settings-status").textContent = `Đã lưu lúc ${new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    scheduleSync();
+  }, 500);
 });
 
 $("#btn-groq-models").addEventListener("click", async () => {
@@ -926,3 +984,8 @@ let startTab = "dashboard";
 try { startTab = sessionStorage.getItem("skv.tab") || (loans.length ? "dashboard" : "upload"); } catch { /* bỏ qua */ }
 showTab(startTab);
 browserNotify();
+
+// Lưu sẵn giao diện và thư viện để mở nhanh, dùng được khi mạng yếu.
+if ("serviceWorker" in navigator && location.protocol === "https:") {
+  navigator.serviceWorker.register("sw.js").catch((err) => console.warn("Không đăng ký được service worker", err));
+}

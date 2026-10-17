@@ -60,6 +60,12 @@ Lịch chạy: 01:00 UTC (8 giờ sáng giờ Việt Nam). GitHub có thể ch�
 
 Key chỉ lưu trong trình duyệt và được gửi thẳng tới `api.groq.com` / `api.anthropic.com`. Nếu một cách đọc sai, mỗi tệp có nút đọc lại bằng cách khác.
 
+## Dùng trên iPhone như một app
+
+Mở web bằng Safari, bấm nút Chia sẻ, chọn **Thêm vào MH chính**. Web sẽ có biểu tượng riêng, mở toàn màn hình, thanh điều hướng ở đáy, mở nhanh hơn nhờ lưu sẵn giao diện và thư viện trên máy.
+
+Lưu ý: dữ liệu của app trên màn hình chính và của tab Safari là hai nơi lưu riêng trên iOS. Nếu đã nhập dữ liệu trong Safari, hãy Xuất JSON rồi Nhập JSON trong app.
+
 ## Lưu ý bảo mật
 
 - Dữ liệu chính nằm trong `localStorage` của trình duyệt. Xoá dữ liệu trình duyệt hoặc đổi máy sẽ không thấy dữ liệu: hãy **Xuất JSON** định kỳ để sao lưu.

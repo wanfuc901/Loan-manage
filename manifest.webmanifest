@@ -1,0 +1,16 @@
+{
+  "name": "Sổ Khoản Vay",
+  "short_name": "Khoản Vay",
+  "description": "Quản lý khoản vay, đọc thông tin từ ảnh chụp màn hình và PDF hợp đồng, nhắc hạn trả nợ.",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#0f766e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
