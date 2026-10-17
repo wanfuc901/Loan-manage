@@ -86,6 +86,13 @@ def status_text(days: int) -> str:
     return f"Còn {days} ngày"
 
 
+def period_text(loan: dict) -> str:
+    paid, term = loan.get("paidPeriods"), loan.get("termMonths")
+    if paid is None or not term:
+        return ""
+    return f"kỳ {min(paid + 1, term)}/{term}"
+
+
 def build_email(items, data: dict, today: dt.date) -> tuple[str, str, str]:
     active = [l for l in data.get("loans", []) if l.get("status") == "active"]
     total_remaining = sum(l.get("remaining") or 0 for l in active)
@@ -103,13 +110,15 @@ def build_email(items, data: dict, today: dt.date) -> tuple[str, str, str]:
     rows = []
     for loan, due, days in items:
         name = loan.get("name") or loan.get("lender") or "Khoản vay"
-        lines.append(f"- {name}: {money(amount_due(loan))}, hạn {fmt_date(due)} ({status_text(days)})")
+        period = period_text(loan)
+        lines.append(f"- {name}: {money(amount_due(loan))}, hạn {fmt_date(due)} ({status_text(days)}){', ' + period if period else ''}")
         color = "#b42318" if days <= 0 else "#b45309" if days <= 3 else "#16191d"
         rows.append(
             "<tr>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb'><b>{html.escape(name)}</b>"
             f"<br><span style='color:#5d6670;font-size:13px'>{html.escape(loan.get('lender') or '')}"
-            f"{' · HĐ ' + html.escape(loan['contractNo']) if loan.get('contractNo') else ''}</span></td>"
+            f"{' · HĐ ' + html.escape(loan['contractNo']) if loan.get('contractNo') else ''}"
+            f"{' · ' + period if period else ''}</span></td>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;text-align:right;white-space:nowrap'>{money(amount_due(loan))}</td>"
             f"<td style='padding:8px;border-bottom:1px solid #e5e7eb;white-space:nowrap'>{fmt_date(due)}"
             f"<br><span style='color:{color};font-size:13px'>{status_text(days)}</span></td>"

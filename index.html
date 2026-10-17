@@ -82,12 +82,13 @@
       <div class="card">
         <div class="engine-row">
           <label class="radio"><input type="radio" name="engine" value="ocr"> OCR miễn phí (chạy trong trình duyệt)</label>
-          <label class="radio"><input type="radio" name="engine" value="ai"> AI Claude (chính xác hơn, cần API key)</label>
+          <label class="radio"><input type="radio" name="engine" value="groq"> AI Groq (cần Groq API key)</label>
+          <label class="radio"><input type="radio" name="engine" value="claude"> AI Claude (cần Claude API key)</label>
         </div>
         <label class="dropzone" id="dropzone">
-          <input type="file" id="file-input" accept="image/*" multiple hidden>
-          <strong>Kéo thả ảnh vào đây, bấm để chọn, hoặc dán (Ctrl+V)</strong>
-          <span class="muted">Chọn bao nhiêu ảnh cũng được. Ảnh chỉ xử lý trên máy bạn (chế độ OCR) hoặc gửi thẳng tới Claude (chế độ AI), không lưu lên server.</span>
+          <input type="file" id="file-input" accept="image/*,application/pdf,.pdf" multiple hidden>
+          <strong>Kéo thả ảnh chụp màn hình hoặc PDF hợp đồng vào đây, bấm để chọn, hoặc dán (Ctrl+V)</strong>
+          <span class="muted">Chọn bao nhiêu tệp cũng được, một ảnh có nhiều khoản vay sẽ được tách riêng. Chế độ OCR xử lý ngay trên máy bạn; chế độ AI gửi tệp thẳng tới Groq hoặc Claude. Không lưu lên server nào khác.</span>
         </label>
         <div id="progress" class="progress" hidden>
           <div class="progress-bar"><span id="progress-fill"></span></div>
@@ -102,7 +103,7 @@
           <button class="btn primary" id="btn-save-all">Lưu các mục đã chọn</button>
         </div>
       </div>
-      <p class="muted small" id="review-hint" hidden>Ô viền vàng là thông tin máy chưa đọc được hoặc cần kiểm tra lại. Sửa trực tiếp rồi bấm Lưu.</p>
+      <p class="muted small" id="review-hint" hidden>Mỗi khoản vay cần đủ: tổng nợ còn lại, số tiền trả mỗi tháng, đã trả bao nhiêu kỳ, tổng số kỳ và ngày trả (dấu <span class="req">*</span>). Ô đỏ là còn thiếu, ô vàng là máy chưa đọc được hoặc tự ước tính, hãy kiểm tra. Sửa trực tiếp rồi bấm Lưu; các ô ước tính tự tính lại khi bạn sửa ô khác.</p>
       <div id="review-list" class="review-list"></div>
     </section>
 
@@ -148,8 +149,19 @@
         </div>
 
         <div class="card">
+          <h2>AI Groq (tuỳ chọn)</h2>
+          <p class="muted small">Tạo key miễn phí tại <a href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a> (có giới hạn số lượt theo gói của Groq). Key chỉ lưu trong trình duyệt này và được gửi thẳng tới api.groq.com. Model phải hỗ trợ đọc ảnh.</p>
+          <div class="form-grid">
+            <label>Groq API key<input type="password" name="groqKey" autocomplete="off" placeholder="gsk_..."></label>
+            <label>Model<input type="text" name="groqModel" list="groq-models" autocomplete="off" placeholder="qwen/qwen3.8-27b"></label>
+          </div>
+          <datalist id="groq-models"></datalist>
+          <div class="row" style="margin-top:10px"><button type="button" class="btn" id="btn-groq-models">Lấy danh sách model</button></div>
+        </div>
+
+        <div class="card">
           <h2>AI Claude (tuỳ chọn)</h2>
-          <p class="muted small">Key chỉ lưu trong trình duyệt này và được gửi thẳng tới api.anthropic.com. Chi phí tính vào tài khoản Anthropic của bạn.</p>
+          <p class="muted small">Cần API key từ <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> (tính phí riêng, gói Claude Pro không bao gồm API). Key chỉ lưu trong trình duyệt này và được gửi thẳng tới api.anthropic.com.</p>
           <div class="form-grid">
             <label>Claude API key<input type="password" name="claudeKey" autocomplete="off" placeholder="sk-ant-..."></label>
             <label>Model

@@ -245,3 +245,13 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .forecast { gap: 4px; }
   .fc-val { font-size: .7rem; }
 }
+
+.req { color: var(--danger); font-weight: 700; }
+.needs-fill input, .needs-fill select { border-color: var(--danger); background: var(--danger-soft); }
+.needs-fill { color: var(--danger) !important; }
+.missing { color: var(--danger); background: var(--danger-soft); border-radius: 8px; padding: 6px 10px; font-size: .88rem; margin-bottom: 10px; }
+.pdf-thumb {
+  display: flex; align-items: center; justify-content: center; height: 140px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--muted); font-weight: 700; letter-spacing: .1em;
+}
+a { color: var(--accent); }

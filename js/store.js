@@ -12,6 +12,8 @@ export const DEFAULT_SETTINGS = {
   engine: "ocr",
   claudeKey: "",
   claudeModel: "claude-opus-5-5",
+  groqKey: "",
+  groqModel: "qwen/qwen3.8-27b",
   ghOwner: "",
   ghRepo: "",
   ghToken: "",
@@ -53,10 +55,6 @@ export function loadSettings() {
 }
 export const saveSettings = (s) => write(SETTINGS_KEY, s);
 
-export function newId() {
-  return crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2);
-}
-
 export function syncConfigured(s) {
   return Boolean(s.ghOwner && s.ghRepo && s.ghToken && s.passphrase && s.email);
 }
@@ -74,8 +72,8 @@ export async function pushEncrypted(loans, s) {
     version: 1,
     updatedAt: new Date().toISOString(),
     settings: { email: s.email, remindDays: s.remindDays, remindOverdue: s.remindOverdue },
-    loans: loans.map(({ id, name, lender, contractNo, remaining, monthlyPayment, dueDate, status, cycle }) =>
-      ({ id, name, lender, contractNo, remaining, monthlyPayment, dueDate, status, cycle })),
+    loans: loans.map(({ id, name, lender, contractNo, remaining, monthlyPayment, dueDate, status, cycle, paidPeriods, termMonths }) =>
+      ({ id, name, lender, contractNo, remaining, monthlyPayment, dueDate, status, cycle, paidPeriods, termMonths })),
   };
   const envelope = await encryptJson(payload, s.passphrase);
   const api = `https://api.github.com/repos/${s.ghOwner}/${s.ghRepo}/contents/${SYNC_PATH}`;

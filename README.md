@@ -4,15 +4,19 @@ Web quản lý khoản vay chạy hoàn toàn trên GitHub (GitHub Pages + GitHu
 
 ## Tính năng
 
-- **Đọc thông tin từ ảnh chụp màn hình**: tải lên không giới hạn số ảnh một lần (chọn file, kéo thả, hoặc dán Ctrl+V). Web tự đọc số tiền vay, dư nợ, số tiền trả mỗi kỳ, ngày đến hạn, lãi suất, kỳ hạn, số hợp đồng, bên cho vay rồi đưa ra để bạn **xác nhận / sửa** trước khi lưu.
-  - *OCR miễn phí*: Tesseract.js chạy ngay trong trình duyệt, ảnh không rời khỏi máy. Hỗ trợ ảnh nền tối.
-  - *AI Claude* (tuỳ chọn): chính xác hơn, đọc được nhiều khoản vay trong một ảnh. Cần API key Anthropic của bạn.
-  - Phát hiện khoản trùng (cùng số hợp đồng hoặc cùng bên cho vay + số tiền) và gợi ý cập nhật vào khoản đã có thay vì tạo mới.
+- **Đọc ảnh chụp màn hình và PDF hợp đồng**: tải lên không giới hạn số tệp một lần (chọn file, kéo thả, hoặc dán Ctrl+V). Một ảnh danh sách có nhiều khoản vay (vd màn hình SEasy) được tách thành từng khoản. Web đưa kết quả ra để bạn **xác nhận / sửa** trước khi lưu.
+  - *OCR miễn phí*: Tesseract.js chạy ngay trong trình duyệt, tệp không rời khỏi máy. Tự tăng tương phản để đọc được chữ xám nhạt, hỗ trợ ảnh nền tối. PDF dạng chữ được đọc trực tiếp, PDF scan được OCR từng trang.
+  - *AI Groq* (tuỳ chọn): dùng Groq API key (có gói miễn phí giới hạn lượt), mặc định model đọc ảnh `qwen/qwen3.8-27b`, có nút lấy danh sách model.
+  - *AI Claude* (tuỳ chọn): cần API key Anthropic (tính phí riêng, gói Claude Pro không bao gồm API).
+- **Thông tin tối thiểu bắt buộc** cho mỗi khoản vay: tổng nợ còn lại, số tiền trả mỗi tháng, đã trả bao nhiêu kỳ, tổng số kỳ (từ đó biết còn bao nhiêu kỳ) và ngày trả. Thiếu thì không lưu được, ô thiếu tô đỏ.
+- **Tự suy ra trường còn thiếu** (tô vàng, ghi là ước tính): tổng nợ = tiền mỗi tháng x số kỳ còn lại; ngày đến hạn kỳ tới từ ngày giải ngân + số kỳ đã trả + ngày trả hằng tháng; tiền trả mỗi tháng từ số tiền vay, lãi suất và số kỳ (trả góp đều). Sửa một ô thì các ô ước tính tự tính lại.
+  - Hiểu các cách ghi: "6/12 đã thanh toán" (đã trả 6/12 kỳ), "Kỳ thanh toán 3/24" (đang ở kỳ 3, đã trả 2), "đến hạn vào ngày 20 mỗi tháng", "Giải ngân vào ngày 20 Th04 2026", "3,000,000 VND", "1,5 triệu"...
+  - Phát hiện khoản trùng (cùng số hợp đồng hoặc cùng bên cho vay + số tiền + ngày giải ngân) và gợi ý cập nhật vào khoản đã có.
 - **Thêm / sửa / xoá** khoản vay, tìm kiếm, lọc, sắp xếp.
-- **Tổng hợp**: tổng dư nợ, tổng tiền gốc, số phải trả tháng này, tổng đã trả, dư nợ theo bên cho vay, lịch trả 6 tháng tới.
-- **Ghi nhận thanh toán**: trừ dư nợ, tự chuyển hạn sang kỳ sau, lưu lịch sử, tự đánh dấu tất toán khi hết nợ.
+- **Tổng hợp**: tổng nợ còn lại, số phải trả tháng này, tổng phải trả mỗi tháng, tổng tiền gốc, dư nợ theo bên cho vay, lịch trả 6 tháng tới.
+- **Ghi nhận thanh toán**: trừ tổng nợ, tăng số kỳ đã trả, chuyển hạn sang kỳ sau, lưu lịch sử, tự tất toán khi trả đủ.
 - **Nhắc hạn trả nợ qua email** mỗi sáng (GitHub Actions + Python), nhắc trước N ngày và nhắc hằng ngày khi quá hạn.
-- Cảnh báo trên web và thông báo trình duyệt khi có khoản sắp đến hạn / quá hạn.
+- Cảnh báo trên web và thông báo trình duyệt khi có khoản sắp đến hạn / quá hạn / thiếu thông tin.
 - Xuất CSV (mở bằng Excel), xuất lịch `.ics` (nhập vào Google Calendar / lịch điện thoại), sao lưu / khôi phục JSON.
 
 ## Cài đặt (làm một lần)
@@ -49,9 +53,12 @@ Vì GitHub Pages chỉ là web tĩnh, việc gửi mail do GitHub Actions đảm
 
 Lịch chạy: 01:00 UTC (8 giờ sáng giờ Việt Nam). GitHub có thể chạy trễ một chút. Với repo công khai, GitHub tự tắt lịch chạy nếu repo không có hoạt động trong 60 ngày; mỗi lần đồng bộ từ web là một commit nên vẫn tính là có hoạt động.
 
-### 3. Dùng AI Claude (tuỳ chọn)
+### 3. Dùng AI Groq hoặc Claude (tuỳ chọn)
 
-Tạo API key tại https://console.anthropic.com, dán vào tab Cài đặt, chọn chế độ **AI Claude** ở tab Thêm từ ảnh. Key chỉ lưu trong trình duyệt và được gửi thẳng tới `api.anthropic.com`. Chi phí tính theo tài khoản Anthropic của bạn; có thể chọn model rẻ hơn trong Cài đặt.
+- **Groq**: tạo key tại https://console.groq.com/keys, dán vào tab Cài đặt, bấm "Lấy danh sách model" nếu muốn đổi model (phải là model đọc được ảnh). Chọn chế độ **AI Groq** ở tab Thêm từ ảnh.
+- **Claude**: tạo API key tại https://console.anthropic.com (tính phí theo lượng dùng, tách biệt với gói Claude Pro), dán vào tab Cài đặt, chọn chế độ **AI Claude**.
+
+Key chỉ lưu trong trình duyệt và được gửi thẳng tới `api.groq.com` / `api.anthropic.com`. Nếu một cách đọc sai, mỗi tệp có nút đọc lại bằng cách khác.
 
 ## Lưu ý bảo mật
 
@@ -64,8 +71,9 @@ Tạo API key tại https://console.anthropic.com, dán vào tab Cài đặt, ch
 ```
 index.html, styles.css     giao diện
 js/app.js                  logic giao diện, tính toán, hàng đợi ảnh
-js/extract.js              OCR (Tesseract.js) và AI (Claude)
-js/parse.js                bóc tách khoản vay từ chữ OCR
+js/extract.js              đọc ảnh/PDF, OCR (Tesseract.js), AI (Groq, Claude)
+js/parse.js                bóc tách khoản vay từ chữ OCR / PDF
+js/loan.js                 chuẩn hoá, tự suy ra trường thiếu, kiểm tra thông tin bắt buộc
 js/store.js                lưu trữ trình duyệt, đồng bộ GitHub
 js/crypto.js               mã hoá AES-GCM
 reminder/send_reminders.py script gửi email nhắc nợ
