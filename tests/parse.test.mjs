@@ -143,7 +143,7 @@ Can thanh toan: 850,000 VND`);
 
 // Tiện ích
 assert.deepEqual(findAmounts(normalize("Ngày 15/10/2026 mã 0912345678")), []);
-assert.deepEqual(findAmounts(normalize("đ230.985 đến hạn")), [230985]);
+assert.deepEqual(findAmounts(normalize("đ310.500 đến hạn")), [310500]);
 assert.equal(findDate(normalize("Giải ngân vào ngày 20 Th04 2026")), "2026-04-20");
 assert.equal(findDate(normalize("Ngày 11 tháng 10 năm 2026")), "2026-10-11");
 assert.equal(advanceDue({ dueDate: "2026-02-28", dueDay: 31 }), "2026-03-31");

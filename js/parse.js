@@ -201,7 +201,7 @@ function findPatterns(joined) {
   }
   if ((m = joined.match(/con\s*(?:lai\s*)?:?\s*(\d{1,3})\s*ky/))) out.remainingPeriods = +m[1];
 
-  // "đ230.985 đến hạn vào ngày 20 mỗi tháng"
+  // "đ310.500 đến hạn vào ngày 20 mỗi tháng"
   const dueDayRe = /(?:den\s*han|phai\s*tra|can\s*tra|thanh\s*toan|tra)\s*(?:vao\s*)?ngay\s*(\d{1,2})\s*(?:hang|moi)\s*thang/;
   if ((m = joined.match(dueDayRe))) {
     out.dueDay = +m[1];
