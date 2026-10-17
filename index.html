@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sổ Khoản Vay</title>
+  <meta name="description" content="Quản lý khoản vay: đọc thông tin từ ảnh chụp màn hình, tính tổng dư nợ, nhắc hạn trả nợ qua email.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f766e'/%3E%3Cpath d='M9 11h14M9 16h14M9 21h9' stroke='white' stroke-width='2.6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true"></span>
+      <span>Sổ Khoản Vay</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="dashboard" aria-selected="true">Tổng quan</button>
+      <button role="tab" data-tab="loans">Khoản vay</button>
+      <button role="tab" data-tab="upload">Thêm từ ảnh</button>
+      <button role="tab" data-tab="settings">Cài đặt</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="alerts"></div>
+
+    <!-- TỔNG QUAN -->
+    <section id="tab-dashboard" class="tab-panel">
+      <div class="stats">
+        <div class="stat"><div class="stat-label">Dư nợ còn lại</div><div class="stat-value" id="st-remaining">0</div><div class="stat-sub" id="st-remaining-sub"></div></div>
+        <div class="stat"><div class="stat-label">Phải trả tháng này</div><div class="stat-value" id="st-month">0</div><div class="stat-sub" id="st-month-sub"></div></div>
+        <div class="stat"><div class="stat-label">Tổng tiền vay gốc</div><div class="stat-value" id="st-principal">0</div><div class="stat-sub" id="st-principal-sub"></div></div>
+        <div class="stat"><div class="stat-label">Đã trả</div><div class="stat-value" id="st-paid">0</div><div class="stat-sub" id="st-paid-sub"></div></div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <h2>Sắp đến hạn</h2>
+          <ul class="due-list" id="due-list"></ul>
+        </div>
+        <div class="card">
+          <h2>Dư nợ theo bên cho vay</h2>
+          <div id="by-lender" class="bars"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Lịch trả 6 tháng tới</h2>
+        <p class="muted small">Ước tính từ số tiền trả mỗi kỳ của các khoản vay trả hàng tháng, không vượt quá dư nợ còn lại.</p>
+        <div id="forecast" class="forecast"></div>
+      </div>
+    </section>
+
+    <!-- DANH SÁCH -->
+    <section id="tab-loans" class="tab-panel" hidden>
+      <div class="toolbar">
+        <input type="search" id="q" placeholder="Tìm theo tên, bên cho vay, số hợp đồng..." aria-label="Tìm kiếm">
+        <select id="f-status" aria-label="Lọc trạng thái">
+          <option value="active">Đang vay</option>
+          <option value="paid">Đã tất toán</option>
+          <option value="all">Tất cả</option>
+        </select>
+        <select id="f-sort" aria-label="Sắp xếp">
+          <option value="due">Hạn trả gần nhất</option>
+          <option value="remaining">Dư nợ lớn nhất</option>
+          <option value="name">Tên A-Z</option>
+          <option value="created">Mới thêm</option>
+        </select>
+        <button class="btn primary" id="btn-add">Thêm thủ công</button>
+      </div>
+      <div class="toolbar secondary">
+        <button class="btn ghost" id="btn-csv">Xuất CSV</button>
+        <button class="btn ghost" id="btn-ics">Xuất lịch (.ics)</button>
+        <span class="muted small" id="list-count"></span>
+      </div>
+      <div id="loan-list" class="loan-list"></div>
+    </section>
+
+    <!-- THÊM TỪ ẢNH -->
+    <section id="tab-upload" class="tab-panel" hidden>
+      <div class="card">
+        <div class="engine-row">
+          <label class="radio"><input type="radio" name="engine" value="ocr"> OCR miễn phí (chạy trong trình duyệt)</label>
+          <label class="radio"><input type="radio" name="engine" value="ai"> AI Claude (chính xác hơn, cần API key)</label>
+        </div>
+        <label class="dropzone" id="dropzone">
+          <input type="file" id="file-input" accept="image/*" multiple hidden>
+          <strong>Kéo thả ảnh vào đây, bấm để chọn, hoặc dán (Ctrl+V)</strong>
+          <span class="muted">Chọn bao nhiêu ảnh cũng được. Ảnh chỉ xử lý trên máy bạn (chế độ OCR) hoặc gửi thẳng tới Claude (chế độ AI), không lưu lên server.</span>
+        </label>
+        <div id="progress" class="progress" hidden>
+          <div class="progress-bar"><span id="progress-fill"></span></div>
+          <span id="progress-text" class="small"></span>
+        </div>
+      </div>
+
+      <div class="review-head" id="review-head" hidden>
+        <h2>Kiểm tra và xác nhận <span class="muted" id="review-count"></span></h2>
+        <div>
+          <button class="btn ghost" id="btn-discard-all">Bỏ tất cả</button>
+          <button class="btn primary" id="btn-save-all">Lưu các mục đã chọn</button>
+        </div>
+      </div>
+      <p class="muted small" id="review-hint" hidden>Ô viền vàng là thông tin máy chưa đọc được hoặc cần kiểm tra lại. Sửa trực tiếp rồi bấm Lưu.</p>
+      <div id="review-list" class="review-list"></div>
+    </section>
+
+    <!-- CÀI ĐẶT -->
+    <section id="tab-settings" class="tab-panel" hidden>
+      <form id="settings-form" class="settings">
+        <div class="card">
+          <h2>Nhắc hẹn trả nợ qua email</h2>
+          <div class="form-grid">
+            <label>Email nhận nhắc
+              <input type="email" name="email" placeholder="ban@gmail.com">
+            </label>
+            <label>Nhắc trước bao nhiêu ngày (phân cách bằng dấu phẩy)
+              <input type="text" name="remindDays" placeholder="3, 1, 0">
+            </label>
+            <label class="check"><input type="checkbox" name="remindOverdue"> Nhắc hàng ngày khi đã quá hạn</label>
+          </div>
+          <p class="muted small">Email được gửi hằng ngày lúc khoảng 8 giờ sáng (giờ Việt Nam) bởi GitHub Actions. Cần cấu hình đồng bộ bên dưới và các secret SMTP trong repo, xem README.</p>
+          <div class="row">
+            <button type="button" class="btn" id="btn-notify">Bật thông báo trình duyệt</button>
+            <span class="small muted">Hiện thông báo khi mở web nếu có khoản sắp đến hạn.</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Đồng bộ lên GitHub (để gửi email)</h2>
+          <p class="muted small">Dữ liệu được mã hoá AES-256 bằng mật khẩu của bạn trước khi ghi vào file <code>data/loans.enc.json</code> trong repo. Người khác xem repo không đọc được nội dung.</p>
+          <div class="form-grid">
+            <label>GitHub owner<input type="text" name="ghOwner" autocomplete="off"></label>
+            <label>Tên repo<input type="text" name="ghRepo" autocomplete="off"></label>
+            <label>Fine-grained token (Contents: Read and write)
+              <input type="password" name="ghToken" autocomplete="off">
+            </label>
+            <label>Mật khẩu mã hoá (trùng secret SYNC_PASSPHRASE)
+              <input type="password" name="passphrase" autocomplete="new-password">
+            </label>
+            <label class="check"><input type="checkbox" name="autoSync"> Tự đồng bộ mỗi khi dữ liệu thay đổi</label>
+          </div>
+          <div class="row">
+            <button type="button" class="btn" id="btn-sync">Đồng bộ ngay</button>
+            <span class="small muted" id="sync-status"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>AI Claude (tuỳ chọn)</h2>
+          <p class="muted small">Key chỉ lưu trong trình duyệt này và được gửi thẳng tới api.anthropic.com. Chi phí tính vào tài khoản Anthropic của bạn.</p>
+          <div class="form-grid">
+            <label>Claude API key<input type="password" name="claudeKey" autocomplete="off" placeholder="sk-ant-..."></label>
+            <label>Model
+              <select name="claudeModel">
+                <option value="claude-opus-5-5">Claude Opus 5.5 (chính xác nhất)</option>
+                <option value="claude-sonnet-5-5">Claude Sonnet 5.5</option>
+                <option value="claude-haiku-5-5">Claude Haiku 5.5 (rẻ nhất)</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Sao lưu dữ liệu</h2>
+          <p class="muted small">Dữ liệu chính nằm trong trình duyệt này. Hãy xuất file sao lưu định kỳ, xoá dữ liệu trình duyệt sẽ mất dữ liệu.</p>
+          <div class="row">
+            <button type="button" class="btn" id="btn-export">Xuất JSON</button>
+            <label class="btn">Nhập JSON<input type="file" id="import-input" accept="application/json,.json" hidden></label>
+            <button type="button" class="btn danger" id="btn-wipe">Xoá toàn bộ</button>
+          </div>
+        </div>
+        <div class="row end">
+          <span class="small muted" id="settings-status"></span>
+          <button type="submit" class="btn primary">Lưu cài đặt</button>
+        </div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Hộp thoại thêm / sửa khoản vay -->
+  <dialog id="loan-dialog">
+    <form method="dialog" id="loan-form" class="dialog-body">
+      <h2 id="loan-dialog-title">Khoản vay</h2>
+      <div class="form-grid" id="loan-fields"></div>
+      <div class="row end">
+        <button value="cancel" class="btn ghost" formnovalidate>Huỷ</button>
+        <button value="ok" class="btn primary">Lưu</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Hộp thoại ghi nhận thanh toán -->
+  <dialog id="pay-dialog">
+    <form method="dialog" id="pay-form" class="dialog-body">
+      <h2>Ghi nhận đã trả</h2>
+      <p class="muted" id="pay-desc"></p>
+      <div class="form-grid">
+        <label>Số tiền đã trả<input type="text" inputmode="numeric" name="amount" data-money required></label>
+        <label>Ngày trả<input type="date" name="date" required></label>
+        <label class="check"><input type="checkbox" name="advance" checked> Chuyển hạn trả sang kỳ sau</label>
+      </div>
+      <div id="pay-history"></div>
+      <div class="row end">
+        <button value="cancel" class="btn ghost" formnovalidate>Huỷ</button>
+        <button value="ok" class="btn primary">Xác nhận</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="image-dialog" class="image-dialog">
+    <form method="dialog"><button class="btn ghost close">Đóng</button></form>
+    <img id="image-full" alt="Ảnh chụp màn hình">
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
