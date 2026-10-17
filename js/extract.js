@@ -264,12 +264,57 @@ async function groqError(res) {
   let msg = "";
   try { msg = (await res.json()).error?.message || ""; } catch { /* không có nội dung */ }
   if (res.status === 401) return "Groq API key không hợp lệ";
-  if (res.status === 429) return `Groq báo vượt giới hạn tốc độ, đợi một lúc rồi thử lại. ${msg}`;
+  if (res.status === 429) return `Groq báo vượt giới hạn của gói hiện tại, đợi một lúc rồi thử lại. ${msg}`;
   if (res.status === 404) return `Không tìm thấy model trên Groq, kiểm tra lại tên model trong Cài đặt. ${msg}`;
   return `Lỗi Groq ${res.status}: ${msg}`;
 }
 
-async function extractWithGroq(input, { apiKey, model }) {
+// Gói miễn phí của Groq giới hạn số token đầu ra mỗi phút (vd 1000 với qwen/qwen3.8-27b),
+// nên với Groq yêu cầu AI trả JSON rút gọn: khoá ngắn, bỏ khoá không có dữ liệu.
+const GROQ_KEYS = {
+  l: "lender", c: "contractNo", p: "principal", r: "remaining", m: "monthlyPayment", i: "interestRate",
+  ip: "interestPeriod", t: "termMonths", pd: "paidPeriods", d: "dueDay", s: "startDate", due: "dueDate",
+};
+const GROQ_FORMAT = `Trả về JSON rút gọn, không xuống dòng, không giải thích: {"loans":[{...},...]}.
+Mỗi khoản vay chỉ ghi các khoá CÓ dữ liệu trong ảnh / văn bản (bỏ hẳn khoá không có, không ghi 0 hay ""):
+l=bên cho vay (ngân hàng / công ty tài chính / app, không phải ví nhận tiền), c=số hợp đồng,
+p=số tiền vay ban đầu, r=dư nợ hoặc tổng tiền còn phải trả (chỉ khi ghi rõ), m=số tiền trả mỗi kỳ / tháng,
+i=lãi suất %, ip="y" nếu lãi theo năm hoặc "m" nếu theo tháng, t=tổng số kỳ, pd=số kỳ đã trả,
+d=ngày trả hằng tháng (1-31), s=ngày giải ngân / ký hợp đồng (YYYY-MM-DD), due=ngày đến hạn kỳ tới (YYYY-MM-DD).
+Ví dụ: {"loans":[{"l":"SEasy","p":2000000,"m":310500,"t":12,"pd":6,"d":12,"s":"2026-04-12"}]}`;
+
+function groqSystemPrompt() {
+  const today = new Date().toISOString().slice(0, 10);
+  return `Bạn đọc ảnh chụp màn hình ứng dụng vay tiền / ngân hàng / ví điện tử, hoặc văn bản hợp đồng tín dụng, và trích xuất các khoản vay.
+Hôm nay là ${today}. Chỉ ghi những gì có trong ảnh / văn bản, không bịa.
+- Số tiền là số nguyên VND ("1,5 triệu" -> 1500000, "đ2.000.000" -> 2000000, "3,000,000 VND" -> 3000000).
+- Ngày viết dạng ngày/tháng/năm; "20 Th04 2026" là 2026-04-20.
+- "6/12 đã thanh toán": pd=6, t=12. "Kỳ thanh toán 3/24" (đang ở kỳ 3): pd=2, t=24.
+- "đ230.000 đến hạn vào ngày 20 mỗi tháng": m=230000, d=20.
+- "Số tiền cần thanh toán" dùng làm m nếu không có số tiền trả hằng tháng riêng.
+- Ảnh có nhiều khoản vay: mỗi khoản một phần tử. Không có khoản vay: {"loans":[]}.
+${GROQ_FORMAT}`;
+}
+
+function expandGroqLoans(parsed) {
+  const loans = Array.isArray(parsed?.loans) ? parsed.loans : [];
+  return {
+    loans: loans.map((short) => {
+      const loan = { paidPeriods: -1 };
+      for (const [k, v] of Object.entries(short || {})) {
+        const full = GROQ_KEYS[k] || (LOAN_KEYS.includes(k) ? k : null);
+        if (full) loan[full] = v;
+      }
+      if (loan.interestPeriod === "m") loan.interestPeriod = "month";
+      else if (loan.interestPeriod !== "month") loan.interestPeriod = "year";
+      return loan;
+    }),
+  };
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function extractWithGroq(input, { apiKey, model }, onProgress) {
   if (!apiKey) throw new Error("Chưa nhập Groq API key trong phần Cài đặt");
   const userContent = input.kind === "text"
     ? `Nội dung văn bản:\n\n${input.text}\n\n${USER_ASK}`
@@ -279,30 +324,55 @@ async function extractWithGroq(input, { apiKey, model }) {
     ];
   const body = {
     model: model || DEFAULT_GROQ_MODEL,
-    messages: [{ role: "system", content: systemPrompt() }, { role: "user", content: userContent }],
+    messages: [{ role: "system", content: groqSystemPrompt() }, { role: "user", content: userContent }],
     response_format: { type: "json_object" },
     temperature: 0,
-    max_completion_tokens: 8192,
+    max_completion_tokens: 800,
     reasoning_effort: "none",
   };
-  const call = (b) => fetch(`${GROQ_API}/chat/completions`, {
+  const call = () => fetch(`${GROQ_API}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(b),
+    body: JSON.stringify(body),
   });
 
-  let res = await call(body);
-  if (res.status === 400) {
-    // Model khác có thể không nhận reasoning_effort: thử lại không có tham số này.
-    const err = await res.clone().json().catch(() => ({}));
-    if (/reasoning/i.test(err.error?.message || "")) {
+  let res;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    res = await call();
+    if (res.ok) break;
+    const msg = (await res.clone().json().catch(() => ({}))).error?.message || "";
+    if (res.status === 400 && /reasoning/i.test(msg) && "reasoning_effort" in body) {
+      // Model khác có thể không nhận reasoning_effort: thử lại không có tham số này.
       delete body.reasoning_effort;
-      res = await call(body);
+      continue;
     }
+    if (/request too large/i.test(msg)) {
+      // Yêu cầu vượt hạn mức token/phút của gói: hạ giới hạn đầu ra xuống dưới hạn mức rồi thử lại.
+      const limit = Number(msg.match(/Limit\s+(\d+)/i)?.[1]);
+      const next = Math.min(limit ? Math.floor(limit * 0.8) : Infinity, Math.floor(body.max_completion_tokens * 0.6));
+      if (next < 200) break;
+      body.max_completion_tokens = next;
+      continue;
+    }
+    if (res.status === 429) {
+      // Đã dùng hết hạn mức của phút này: đợi theo retry-after rồi gửi lại.
+      const wait = Number(res.headers.get("retry-after")) || Number(msg.match(/try again in ([\d.]+)s/i)?.[1]) || 20;
+      if (wait > 90) break;
+      for (let left = Math.ceil(wait); left > 0; left--) {
+        onProgress?.({ status: `Groq giới hạn số lượt mỗi phút, đợi ${left} giây` });
+        await sleep(1000);
+      }
+      continue;
+    }
+    break;
   }
   if (!res.ok) throw new Error(await groqError(res));
   const data = await res.json();
-  return toResults(parseJsonLoose(data.choices?.[0]?.message?.content || ""));
+  const choice = data.choices?.[0];
+  if (choice?.finish_reason === "length") {
+    throw new Error("Kết quả của Groq bị cắt do giới hạn token của gói miễn phí. Thử ảnh ít khoản vay hơn (cắt ảnh) hoặc dùng OCR.");
+  }
+  return toResults(expandGroqLoans(parseJsonLoose(choice?.message?.content || "")));
 }
 
 export async function listGroqModels(apiKey) {
@@ -323,7 +393,7 @@ export async function extractLoans(file, engine, settings, onProgress) {
   if (engine === "claude") {
     results = await extractWithClaude(input, { apiKey: settings.claudeKey, model: settings.claudeModel });
   } else if (engine === "groq") {
-    results = await extractWithGroq(input, { apiKey: settings.groqKey, model: settings.groqModel });
+    results = await extractWithGroq(input, { apiKey: settings.groqKey, model: settings.groqModel }, onProgress);
   } else {
     const text = input.kind === "text" ? input.text : await ocrImages(input.images, onProgress);
     results = parseLoans(text, { document: input.document });
